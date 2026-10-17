@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/DevelopersGlobal/ironclavebot/internal/provider"
@@ -18,6 +19,9 @@ type IssueSolver struct {
 	box      *sandbox.Sandbox
 	provider provider.Provider
 	model    string
+
+	mu      sync.Mutex
+	created []string // files newly created by ApplyPatch, for GenerateDiff
 }
 
 // NewIssueSolver creates an issue solver instance
@@ -71,12 +75,18 @@ func (s *IssueSolver) InspectRepository(ctx context.Context) (*RepoInspection, e
 
 	// 5. List key repository files
 	var files []string
+	const maxInspectFiles = 100
 	_ = filepath.Walk(workdir, func(p string, info os.FileInfo, err error) error {
-		if err != nil || len(files) > 100 {
+		if err != nil {
 			return nil
 		}
+		if len(files) >= maxInspectFiles {
+			return filepath.SkipAll // stop walking once the budget is full
+		}
 		if info.IsDir() {
-			if strings.HasPrefix(info.Name(), ".") && info.Name() != "." {
+			// Skip hidden directories below the root; the root itself may
+			// legitimately have a name such as ".workspace".
+			if p != workdir && strings.HasPrefix(info.Name(), ".") {
 				return filepath.SkipDir
 			}
 			return nil
@@ -171,6 +181,7 @@ func (s *IssueSolver) RunReproduction(ctx context.Context, reproCommand string) 
 		return &ExecutionResult{
 			Command: "(no reproduction command provided)",
 			Success: true,
+			Skipped: true,
 			Output:  "Skipped explicit reproduction run",
 		}, nil
 	}
@@ -190,14 +201,19 @@ func (s *IssueSolver) RunReproduction(ctx context.Context, reproCommand string) 
 // ApplyPatch writes the patched content to the target file inside the sandbox
 func (s *IssueSolver) ApplyPatch(ctx context.Context, patches []FilePatch) error {
 	for _, p := range patches {
-		safePath, err := s.box.ValidatePath(p.Path)
-		if err != nil {
+		if _, err := s.box.ValidatePath(p.Path); err != nil {
 			return fmt.Errorf("patch safety violation: %w", err)
 		}
+		existed := s.box.Exists(p.Path)
 
-		_ = os.MkdirAll(filepath.Dir(safePath), 0755)
-		if err := os.WriteFile(safePath, []byte(p.NewContent), 0644); err != nil {
+		// Confined write: symlinks cannot redirect the patch outside the workdir.
+		if err := s.box.WriteFile(p.Path, []byte(p.NewContent)); err != nil {
 			return fmt.Errorf("failed to write patch to %s: %w", p.Path, err)
+		}
+		if !existed {
+			s.mu.Lock()
+			s.created = append(s.created, p.Path)
+			s.mu.Unlock()
 		}
 	}
 	return nil
@@ -206,10 +222,12 @@ func (s *IssueSolver) ApplyPatch(ctx context.Context, patches []FilePatch) error
 // VerifyFix runs verification tests in the sandbox
 func (s *IssueSolver) VerifyFix(ctx context.Context, verifyCommand string) (*ExecutionResult, error) {
 	if verifyCommand == "" {
+		// Nothing was verified, so this must not read as a passing test.
 		return &ExecutionResult{
 			Command: "(no verify command provided)",
-			Success: true,
-			Output:  "No automated verification command specified",
+			Success: false,
+			Skipped: true,
+			Output:  "No automated verification command specified; the fix is unverified",
 		}, nil
 	}
 
@@ -227,11 +245,29 @@ func (s *IssueSolver) VerifyFix(ctx context.Context, verifyCommand string) (*Exe
 
 // GenerateDiff executes git diff to produce a clean patch diff
 func (s *IssueSolver) GenerateDiff(ctx context.Context) (string, error) {
+	// Plain "git diff" omits untracked files. Mark only the files this solver
+	// created as intent-to-add so they appear in the diff; other untracked
+	// user files are left alone.
+	s.mu.Lock()
+	created := append([]string(nil), s.created...)
+	s.mu.Unlock()
+	if len(created) > 0 {
+		quoted := make([]string, 0, len(created))
+		for _, f := range created {
+			quoted = append(quoted, sandbox.ShellQuote(f))
+		}
+		if _, err := s.box.ExecuteCommand(ctx, "git add -N -- "+strings.Join(quoted, " ")); err != nil {
+			return "", fmt.Errorf("failed to include new files in diff: %w", err)
+		}
+	}
+
 	diff, err := s.box.ExecuteCommand(ctx, "git diff")
 	if err != nil {
 		return "", fmt.Errorf("failed to generate git diff: %w", err)
 	}
-	return strings.TrimSpace(diff), nil
+	// Returned unchanged: trimming would drop trailing whitespace and the
+	// final newline, so the patch would no longer apply cleanly.
+	return diff, nil
 }
 
 // Solve executes the end-to-end autonomous DevRel routine:
@@ -244,10 +280,7 @@ func (s *IssueSolver) Solve(ctx context.Context, issue IssueRequest) (*Resolutio
 	}
 
 	// Step 3: Run reproduction test
-	reproResult, err := s.RunReproduction(ctx, issue.ReproCommand)
-	if err != nil {
-		// Log but continue
-	}
+	reproResult, _ := s.RunReproduction(ctx, issue.ReproCommand)
 
 	// Step 4: Apply patch
 	if issue.TargetFile != "" && issue.ProposedPatch != "" {
@@ -268,7 +301,9 @@ func (s *IssueSolver) Solve(ctx context.Context, issue IssueRequest) (*Resolutio
 	commitMsg := fmt.Sprintf("fix: resolve %s\n\nRoot cause: %s", issue.Title, triage.SuspectedCause)
 
 	return &ResolutionReport{
-		Success:          verifyResult == nil || verifyResult.Success,
+		// Success requires a verification command that actually ran and passed.
+		Success:          verifyResult != nil && verifyResult.Success && !verifyResult.Skipped,
+		Verified:         verifyResult != nil && verifyResult.Success && !verifyResult.Skipped,
 		IssueTitle:       issue.Title,
 		Triage:           triage,
 		ReproductionTest: reproResult,

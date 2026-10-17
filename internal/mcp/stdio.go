@@ -10,19 +10,25 @@ import (
 	"os/exec"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 // StdioTransport implements MCP Transport over stdin/stdout of a subprocess
 type StdioTransport struct {
-	cmd       *exec.Cmd
-	stdin     io.WriteCloser
-	stdout    io.ReadCloser
-	stderr    io.ReadCloser
-	writeMu   sync.Mutex
+	cmd    *exec.Cmd
+	stdin  io.WriteCloser
+	stdout io.ReadCloser
+	stderr io.ReadCloser
+
+	// writeSem allows one writer at a time while letting waiters give up when
+	// their context ends.
+	writeSem chan struct{}
+
 	pendingMu sync.Mutex
 	pending   map[string]chan *JSONRPCResponse
-	closed    atomic.Bool
-	done      chan struct{}
+	dead      bool // reader ended; guarded by pendingMu
+
+	closed atomic.Bool
 }
 
 // NewStdioTransport starts an external command and creates a stdio MCP transport
@@ -61,18 +67,47 @@ func NewStdioTransport(command string, args []string, env []string, dir string) 
 	}
 
 	t := &StdioTransport{
-		cmd:     cmd,
-		stdin:   stdin,
-		stdout:  stdout,
-		stderr:  stderr,
-		pending: make(map[string]chan *JSONRPCResponse),
-		done:    make(chan struct{}),
+		cmd:      cmd,
+		stdin:    stdin,
+		stdout:   stdout,
+		stderr:   stderr,
+		writeSem: make(chan struct{}, 1),
+		pending:  make(map[string]chan *JSONRPCResponse),
 	}
 
 	go t.readLoop()
 	go t.stderrLoop()
 
 	return t, nil
+}
+
+// writeLine writes one newline-terminated message. It gives up when ctx ends:
+// a write that is stuck on a full pipe cannot be interrupted, so in that case
+// the transport is closed (which kills the subprocess and unblocks the write),
+// because a partial write would corrupt the framing anyway.
+func (t *StdioTransport) writeLine(ctx context.Context, payload []byte) error {
+	data := append(append([]byte{}, payload...), '\n')
+
+	select {
+	case t.writeSem <- struct{}{}:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+
+	res := make(chan error, 1)
+	go func() {
+		_, err := t.stdin.Write(data)
+		<-t.writeSem
+		res <- err
+	}()
+
+	select {
+	case err := <-res:
+		return err
+	case <-ctx.Done():
+		_ = t.Close()
+		return ctx.Err()
+	}
 }
 
 func (t *StdioTransport) readLoop() {
@@ -87,27 +122,36 @@ func (t *StdioTransport) readLoop() {
 			continue
 		}
 
-		var resp JSONRPCResponse
-		if err := json.Unmarshal(line, &resp); err != nil {
+		var msg incomingMessage
+		if err := json.Unmarshal(line, &msg); err != nil {
 			continue
 		}
 
-		if resp.ID != nil {
-			idKey := fmt.Sprint(resp.ID)
+		switch {
+		case msg.isServerRequest():
+			// Answer on its own goroutine so a slow write cannot stall reading.
+			go t.answerServerRequest(&msg)
+		case msg.isServerNotification():
+			// Notifications need no reply and are not tracked.
+		case msg.ID != nil:
+			key := idKey(msg.ID)
 			t.pendingMu.Lock()
-			ch, ok := t.pending[idKey]
+			ch, ok := t.pending[key]
 			if ok {
-				delete(t.pending, idKey)
+				delete(t.pending, key)
 			}
 			t.pendingMu.Unlock()
-
 			if ok && ch != nil {
-				ch <- &resp
+				ch <- msg.response()
 			}
 		}
 	}
 
+	// Reader ended: mark the transport dead and release everyone waiting,
+	// under the same lock Send uses to register, so no request can slip in
+	// after the drain.
 	t.pendingMu.Lock()
+	t.dead = true
 	for k, ch := range t.pending {
 		close(ch)
 		delete(t.pending, k)
@@ -115,11 +159,20 @@ func (t *StdioTransport) readLoop() {
 	t.pendingMu.Unlock()
 }
 
-func (t *StdioTransport) stderrLoop() {
-	scanner := bufio.NewScanner(t.stderr)
-	for scanner.Scan() {
-		// Log or suppress stderr from sub-agent
+func (t *StdioTransport) answerServerRequest(msg *incomingMessage) {
+	data, err := json.Marshal(replyToServerRequest(msg))
+	if err != nil {
+		return
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	_ = t.writeLine(ctx, data)
+}
+
+func (t *StdioTransport) stderrLoop() {
+	// Drain without line tokenization so one very long line cannot stop the
+	// drain and block the subprocess on a full pipe.
+	_, _ = io.Copy(io.Discard, t.stderr)
 }
 
 func (t *StdioTransport) Send(ctx context.Context, req *JSONRPCRequest) (*JSONRPCResponse, error) {
@@ -127,16 +180,20 @@ func (t *StdioTransport) Send(ctx context.Context, req *JSONRPCRequest) (*JSONRP
 		return nil, fmt.Errorf("stdio transport is closed")
 	}
 
-	idKey := fmt.Sprint(req.ID)
+	idKeyStr := idKey(req.ID)
 	ch := make(chan *JSONRPCResponse, 1)
 
 	t.pendingMu.Lock()
-	t.pending[idKey] = ch
+	if t.dead {
+		t.pendingMu.Unlock()
+		return nil, fmt.Errorf("stdio transport is closed: MCP process output ended")
+	}
+	t.pending[idKeyStr] = ch
 	t.pendingMu.Unlock()
 
 	defer func() {
 		t.pendingMu.Lock()
-		delete(t.pending, idKey)
+		delete(t.pending, idKeyStr)
 		t.pendingMu.Unlock()
 	}()
 
@@ -144,12 +201,7 @@ func (t *StdioTransport) Send(ctx context.Context, req *JSONRPCRequest) (*JSONRP
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal JSON-RPC request: %w", err)
 	}
-	data = append(data, '\n')
-
-	t.writeMu.Lock()
-	_, err = t.stdin.Write(data)
-	t.writeMu.Unlock()
-	if err != nil {
+	if err := t.writeLine(ctx, data); err != nil {
 		return nil, fmt.Errorf("failed to write to MCP stdin: %w", err)
 	}
 
@@ -173,12 +225,7 @@ func (t *StdioTransport) Notify(ctx context.Context, req *JSONRPCRequest) error 
 	if err != nil {
 		return fmt.Errorf("failed to marshal JSON-RPC notification: %w", err)
 	}
-	data = append(data, '\n')
-
-	t.writeMu.Lock()
-	defer t.writeMu.Unlock()
-	_, err = t.stdin.Write(data)
-	return err
+	return t.writeLine(ctx, data)
 }
 
 func (t *StdioTransport) Close() error {
