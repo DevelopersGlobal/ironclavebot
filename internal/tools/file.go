@@ -3,8 +3,6 @@ package tools
 import (
 	"context"
 	"fmt"
-	"os"
-	"path/filepath"
 
 	"github.com/DevelopersGlobal/ironclavebot/internal/sandbox"
 )
@@ -44,11 +42,7 @@ func (r *ReadFileTool) Execute(ctx context.Context, argsJSON string) (string, er
 	if err := ParseArgs(argsJSON, &args); err != nil {
 		return "", err
 	}
-	safePath, err := r.box.ValidatePath(args.Path)
-	if err != nil {
-		return "", err
-	}
-	bytes, err := os.ReadFile(safePath)
+	bytes, err := r.box.ReadFile(args.Path)
 	if err != nil {
 		return "", fmt.Errorf("failed to read file: %w", err)
 	}
@@ -95,12 +89,7 @@ func (w *WriteFileTool) Execute(ctx context.Context, argsJSON string) (string, e
 	if err := ParseArgs(argsJSON, &args); err != nil {
 		return "", err
 	}
-	safePath, err := w.box.ValidatePath(args.Path)
-	if err != nil {
-		return "", err
-	}
-	_ = os.MkdirAll(filepath.Dir(safePath), 0755)
-	if err := os.WriteFile(safePath, []byte(args.Content), 0644); err != nil {
+	if err := w.box.WriteFile(args.Path, []byte(args.Content)); err != nil {
 		return "", fmt.Errorf("failed to write file: %w", err)
 	}
 	return fmt.Sprintf("Successfully wrote %d bytes to %s", len(args.Content), args.Path), nil
