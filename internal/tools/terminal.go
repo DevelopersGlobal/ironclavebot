@@ -22,7 +22,7 @@ func (t *TerminalTool) Name() string {
 }
 
 func (t *TerminalTool) Description() string {
-	return "Executes a shell command inside the isolated sandbox workspace. Destructive commands are strictly blocked."
+	return "Executes a shell command with the sandbox workspace as its working directory. Output is capped and commands time out after 30 seconds. This is not a filesystem or network boundary."
 }
 
 func (t *TerminalTool) Parameters() map[string]interface{} {

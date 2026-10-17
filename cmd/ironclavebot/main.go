@@ -43,6 +43,7 @@ func main() {
 	provName := flag.String("provider", "", "LLM provider (mock, openai, anthropic, deepseek, ollama, vllm)")
 	modelName := flag.String("model", "", "Model name (e.g. gpt-4o, claude-3-5-sonnet-20241022, deepseek-chat, llama3.2)")
 	cliPrompt := flag.String("chat", "", "Run single command turn directly from CLI without web UI")
+	host := flag.String("host", "127.0.0.1", "Dashboard listen address (non-loopback requires API_TOKEN)")
 	secMode := flag.String("security", "", "Security policy tier (strict, interactive, permissive)")
 	mcpConfigPath := flag.String("mcp-config", "", "Path to MCP server configuration JSON file")
 	solveIssueTitle := flag.String("solve-issue", "", "Run autonomous Git issue solver on repository with issue title")
@@ -51,17 +52,28 @@ func main() {
 	targetFile := flag.String("target", "", "Target source file for issue solver")
 	flag.Parse()
 
+	if err := config.LoadDotEnv(".env"); err != nil {
+		log.Fatalf("Failed to read .env: %v", err)
+	}
 	cfg := config.Load()
-	if *port != 8080 {
+
+	// Only flags that were actually passed override the environment, even when
+	// the value equals the flag's default.
+	set := map[string]bool{}
+	flag.Visit(func(f *flag.Flag) { set[f.Name] = true })
+	if set["port"] {
 		cfg.Port = *port
 	}
-	if *workdir != "./workspace" {
+	if set["host"] {
+		cfg.Host = *host
+	}
+	if set["workdir"] {
 		cfg.SandboxWorkdir = *workdir
 	}
-	if *provName != "" {
+	if set["provider"] {
 		cfg.LLMProvider = *provName
 	}
-	if *modelName != "" {
+	if set["model"] {
 		cfg.LLMModel = *modelName
 	}
 	if *secMode != "" {
@@ -78,6 +90,9 @@ func main() {
 	policy := sandbox.Policy(cfg.SecurityMode)
 	box := sandbox.New(cfg.SandboxWorkdir, policy)
 	approvalEngine := sandbox.NewApprovalEngine(policy, 60*time.Second)
+	if st, err := os.Stat(box.Workdir()); err != nil || !st.IsDir() {
+		log.Fatalf("Sandbox workdir %s is not usable: %v", box.Workdir(), err)
+	}
 
 	// 3. Register standard built-in tools
 	registry := tools.NewRegistry()
