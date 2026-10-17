@@ -1,11 +1,16 @@
 package server
 
 import (
+	"crypto/subtle"
 	"encoding/json"
-	"fmt"
+	"errors"
 	"log"
+	"net"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/DevelopersGlobal/ironclavebot/internal/agent"
 	"github.com/DevelopersGlobal/ironclavebot/internal/config"
@@ -13,6 +18,8 @@ import (
 	"github.com/DevelopersGlobal/ironclavebot/internal/sandbox"
 	"github.com/DevelopersGlobal/ironclavebot/web"
 )
+
+const maxRequestBody = 1 << 20 // 1 MiB
 
 // Server provides the HTTP dashboard and agent REST API
 type Server struct {
@@ -32,8 +39,16 @@ func New(cfg *config.Config, a *agent.Agent, s database.Store, sb *sandbox.Sandb
 	}
 }
 
-// Start listens on the configured port
-func (s *Server) Start() error {
+func isLoopbackHost(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(strings.Trim(host, "[]"))
+	return ip != nil && ip.IsLoopback()
+}
+
+// Handler builds the HTTP handler with all routes and protections.
+func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 
 	// 1. Embedded static frontend dashboard
@@ -78,6 +93,7 @@ func (s *Server) Start() error {
 			var body struct {
 				Title string `json:"title"`
 			}
+			r.Body = http.MaxBytesReader(w, r.Body, maxRequestBody)
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			if body.Title == "" {
 				body.Title = "Persistent Teammate"
@@ -104,6 +120,12 @@ func (s *Server) Start() error {
 
 		sessionID := parts[2]
 
+		// Unknown sessions never reach the store or the agent.
+		if _, err := s.store.GetSession(sessionID); err != nil {
+			http.Error(w, "session not found", http.StatusNotFound)
+			return
+		}
+
 		// GET /api/sessions/{id}/messages
 		if len(parts) == 4 && parts[3] == "messages" && r.Method == http.MethodGet {
 			msgs, err := s.store.GetMessages(sessionID)
@@ -120,6 +142,7 @@ func (s *Server) Start() error {
 			var body struct {
 				Prompt string `json:"prompt"`
 			}
+			r.Body = http.MaxBytesReader(w, r.Body, maxRequestBody)
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Prompt == "" {
 				http.Error(w, "invalid prompt payload", 400)
 				return
@@ -140,13 +163,95 @@ func (s *Server) Start() error {
 		http.NotFound(w, r)
 	})
 
-	addr := fmt.Sprintf(":%d", s.cfg.Port)
-	log.Printf("🛡️ [IronClaveBot] Running at http://127.0.0.1%s", addr)
-	log.Printf("🔒 [IronClaveBot] Sandbox isolated at %s", s.sandbox.Workdir())
-	return http.ListenAndServe(addr, mux)
+	return s.protect(mux)
+}
+
+// protect wraps the API routes with host, origin, content-type and token
+// checks. The dashboard page itself is served without a token so a browser
+// can load it and then prompt for one.
+func (s *Server) protect(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasPrefix(r.URL.Path, "/api/") {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		// DNS-rebinding guard: when bound to loopback, only loopback Host
+		// headers are accepted.
+		if isLoopbackHost(s.cfg.Host) {
+			h := r.Host
+			if hh, _, err := net.SplitHostPort(r.Host); err == nil {
+				h = hh
+			}
+			if !isLoopbackHost(h) {
+				http.Error(w, "forbidden host", http.StatusForbidden)
+				return
+			}
+		}
+
+		// Cross-site browser requests: Origin, when sent, must match Host.
+		if origin := r.Header.Get("Origin"); origin != "" {
+			u, err := url.Parse(origin)
+			if err != nil || !strings.EqualFold(u.Host, r.Host) {
+				http.Error(w, "forbidden origin", http.StatusForbidden)
+				return
+			}
+		}
+
+		if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
+			// Requiring JSON forces a CORS preflight for cross-origin callers,
+			// which this server never approves.
+			ct := strings.ToLower(strings.TrimSpace(strings.SplitN(r.Header.Get("Content-Type"), ";", 2)[0]))
+			if ct != "application/json" {
+				http.Error(w, "Content-Type must be application/json", http.StatusUnsupportedMediaType)
+				return
+			}
+		}
+
+		if s.cfg.APIToken != "" {
+			got := bearerToken(r)
+			if got == "" || subtle.ConstantTimeCompare([]byte(got), []byte(s.cfg.APIToken)) != 1 {
+				w.Header().Set("WWW-Authenticate", `Bearer realm="ironclavebot"`)
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
+func bearerToken(r *http.Request) string {
+	h := r.Header.Get("Authorization")
+	if len(h) > 7 && strings.EqualFold(h[:7], "bearer ") {
+		return strings.TrimSpace(h[7:])
+	}
+	return ""
+}
+
+// Start listens on the configured host and port.
+func (s *Server) Start() error {
+	if !isLoopbackHost(s.cfg.Host) && s.cfg.APIToken == "" {
+		return errors.New("refusing to listen on a non-loopback address without API_TOKEN: set API_TOKEN or use HOST=127.0.0.1")
+	}
+
+	addr := net.JoinHostPort(s.cfg.Host, strconv.Itoa(s.cfg.Port))
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           s.Handler(),
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+	log.Printf("🛡️ [IronClaveBot] Running at http://%s", addr)
+	log.Printf("🔒 [IronClaveBot] Sandbox workdir %s (policy: %s)", s.sandbox.Workdir(), s.sandbox.Policy())
+	if s.cfg.APIToken == "" {
+		log.Printf("[IronClaveBot] API token not set; access is limited to loopback")
+	}
+	return srv.ListenAndServe()
 }
 
 func jsonResp(w http.ResponseWriter, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(data)
+	if err := json.NewEncoder(w).Encode(data); err != nil {
+		log.Printf("[IronClaveBot] failed to write response: %v", err)
+	}
 }

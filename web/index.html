@@ -111,10 +111,37 @@
 
   <script>
     let activeSessionId = null;
+    let apiToken = sessionStorage.getItem('ironclave_api_token') || '';
+
+    // All API calls go through here so the optional API token is attached and
+    // a 401 prompts for it once.
+    async function apiFetch(url, options = {}) {
+      const send = () => {
+        const headers = Object.assign({}, options.headers || {});
+        if (apiToken) headers['Authorization'] = 'Bearer ' + apiToken;
+        return fetch(url, Object.assign({}, options, { headers }));
+      };
+      let res = await send();
+      if (res.status === 401) {
+        const entered = window.prompt('This IronClaveBot requires an API token:');
+        if (entered) {
+          apiToken = entered.trim();
+          sessionStorage.setItem('ironclave_api_token', apiToken);
+          res = await send();
+        }
+      }
+      return res;
+    }
+
+    async function errorText(res) {
+      const text = (await res.text()).trim();
+      return text || ('HTTP ' + res.status);
+    }
 
     async function fetchSessions() {
       try {
-        const res = await fetch('/api/sessions');
+        const res = await apiFetch('/api/sessions');
+        if (!res.ok) throw new Error(await errorText(res));
         const data = await res.json();
         const list = document.getElementById('sessionList');
         list.innerHTML = '';
@@ -137,7 +164,8 @@
     }
 
     async function createNewSession() {
-      const res = await fetch('/api/sessions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: 'Workspace #' + Math.floor(Math.random() * 1000) }) });
+      const res = await apiFetch('/api/sessions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: 'Workspace #' + Math.floor(Math.random() * 1000) }) });
+      if (!res.ok) { appendMessageUI({ role: 'assistant', content: 'Could not create a session: ' + await errorText(res) }); return; }
       const session = await res.json();
       activeSessionId = session.id;
       await fetchSessions();
@@ -151,8 +179,12 @@
     }
 
     async function loadMessages(id) {
-      const res = await fetch(`/api/sessions/${id}/messages`);
+      const res = await apiFetch(`/api/sessions/${id}/messages`);
+      if (id !== activeSessionId) return; // a newer selection replaced this one
+      if (!res.ok) throw new Error(await errorText(res));
       const msgs = await res.json();
+      // Re-check after the body is read: responses can finish out of order.
+      if (id !== activeSessionId) return;
       const stream = document.getElementById('chatStream');
       stream.innerHTML = '';
       msgs.forEach(appendMessageUI);
@@ -201,25 +233,42 @@
       const text = input.value.trim();
       if (!text || !activeSessionId) return;
 
+      const sessionId = activeSessionId;
       appendMessageUI({ role: 'user', content: text });
       input.value = '';
 
       try {
-        const res = await fetch(`/api/sessions/${activeSessionId}/chat`, {
+        const res = await apiFetch(`/api/sessions/${sessionId}/chat`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ prompt: text })
         });
-        const data = await res.json();
-        await loadMessages(activeSessionId);
+        if (!res.ok) {
+          // The daemon sends plain-text errors, so read text, not JSON.
+          const msg = await errorText(res);
+          if (sessionId === activeSessionId) {
+            appendMessageUI({ role: 'assistant', content: 'Error: ' + msg });
+          }
+          return;
+        }
+        await res.json();
+        await loadMessages(sessionId);
       } catch (err) {
         appendMessageUI({ role: 'assistant', content: 'Error communicating with bot daemon: ' + err.message });
       }
     });
 
+    // Enter sends; Shift+Enter inserts a newline; Enter during IME composition is left alone.
+    document.getElementById('promptInput').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229) {
+        e.preventDefault();
+        document.getElementById('chatForm').requestSubmit();
+      }
+    });
+
     document.getElementById('newSessionBtn').onclick = createNewSession;
 
-    fetch('/api/status').then(r => r.json()).then(s => {
+    apiFetch('/api/status').then(r => r.json()).then(s => {
       document.getElementById('modelBadge').textContent = `${s.provider}: ${s.model}`;
     }).catch(() => {});
 

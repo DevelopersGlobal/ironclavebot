@@ -1,0 +1,15 @@
+# Build output
+/bin/
+/ironclavebot
+
+# Local runtime data and sandbox workspace
+/data/
+/workspace/
+
+# Local configuration and secrets
+.env
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/

@@ -26,26 +26,38 @@ const Banner = `
 `
 
 func main() {
-	fmt.Println(Banner)
+	fmt.Print(Banner)
 
 	port := flag.Int("port", 8080, "Web dashboard port")
 	workdir := flag.String("workdir", "./workspace", "Sandbox isolated working directory")
 	provName := flag.String("provider", "", "LLM provider (mock, openai, ollama)")
 	modelName := flag.String("model", "", "Model name (e.g. gpt-4o, llama3.2)")
 	cliPrompt := flag.String("chat", "", "Run single command turn directly from CLI without web UI")
+	host := flag.String("host", "127.0.0.1", "Dashboard listen address (non-loopback requires API_TOKEN)")
 	flag.Parse()
 
+	if err := config.LoadDotEnv(".env"); err != nil {
+		log.Fatalf("Failed to read .env: %v", err)
+	}
 	cfg := config.Load()
-	if *port != 8080 {
+
+	// Only flags that were actually passed override the environment, even when
+	// the value equals the flag's default.
+	set := map[string]bool{}
+	flag.Visit(func(f *flag.Flag) { set[f.Name] = true })
+	if set["port"] {
 		cfg.Port = *port
 	}
-	if *workdir != "./workspace" {
+	if set["host"] {
+		cfg.Host = *host
+	}
+	if set["workdir"] {
 		cfg.SandboxWorkdir = *workdir
 	}
-	if *provName != "" {
+	if set["provider"] {
 		cfg.LLMProvider = *provName
 	}
-	if *modelName != "" {
+	if set["model"] {
 		cfg.LLMModel = *modelName
 	}
 
@@ -57,6 +69,9 @@ func main() {
 
 	// 2. Initialize isolated sandbox
 	box := sandbox.New(cfg.SandboxWorkdir, sandbox.Policy(cfg.SecurityMode))
+	if st, err := os.Stat(box.Workdir()); err != nil || !st.IsDir() {
+		log.Fatalf("Sandbox workdir %s is not usable: %v", box.Workdir(), err)
+	}
 
 	// 3. Register tools
 	registry := tools.NewRegistry()

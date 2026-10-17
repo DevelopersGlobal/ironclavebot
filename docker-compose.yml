@@ -4,13 +4,22 @@ services:
     container_name: ironclavebot
     restart: unless-stopped
     ports:
-      - "8080:8080"
+      # Published on the host loopback only. Put an authenticated reverse proxy
+      # in front before exposing it any further.
+      - "127.0.0.1:8080:8080"
     environment:
       - PORT=8080
+      # Listen on all interfaces inside the container; API_TOKEN is required
+      # for that and every API request must send "Authorization: Bearer <token>".
+      - HOST=0.0.0.0
+      - API_TOKEN=${API_TOKEN:?set API_TOKEN in your environment or .env file}
       - LLM_PROVIDER=openai # openai | ollama | mock
       - LLM_MODEL=gpt-4o
       - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - SECURITY_MODE=interactive
+      # The container is the isolation boundary, so allow the agent to run
+      # commands and write files. interactive/strict refuse both until an
+      # approval mechanism exists.
+      - SECURITY_MODE=permissive
       - DATABASE_PATH=/ironclave/data/ironclavebot.db
       - SANDBOX_WORKDIR=/ironclave/workspace
     volumes:

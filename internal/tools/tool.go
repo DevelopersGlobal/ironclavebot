@@ -35,6 +35,18 @@ func (r *Registry) Register(tool Tool) {
 	r.tools[tool.Name()] = tool
 }
 
+// RegisterUnique adds a tool and refuses to replace an existing one with the
+// same name.
+func (r *Registry) RegisterUnique(tool Tool) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, exists := r.tools[tool.Name()]; exists {
+		return fmt.Errorf("tool %q is already registered", tool.Name())
+	}
+	r.tools[tool.Name()] = tool
+	return nil
+}
+
 // Get retrieves a tool by name
 func (r *Registry) Get(name string) (Tool, bool) {
 	r.mu.RLock()
