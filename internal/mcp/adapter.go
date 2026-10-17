@@ -2,6 +2,8 @@ package mcp
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -27,10 +29,39 @@ func NewMCPToolAdapter(serverName string, client *Client, tool Tool) *MCPToolAda
 	}
 }
 
+// maxToolNameLen is the longest function name OpenAI-compatible providers accept.
+const maxToolNameLen = 64
+
+// Name returns a provider-compatible tool name (letters, digits, '_' and '-',
+// at most 64 characters). Names that needed changes (invalid characters or
+// truncation) get a short hash of the original server and tool names, so two
+// different tools can never collapse into the same name. '-' is kept as is,
+// so "read-file" and "read_file" stay distinct.
 func (a *MCPToolAdapter) Name() string {
-	cleanServer := strings.ReplaceAll(a.serverName, "-", "_")
-	cleanTool := strings.ReplaceAll(a.tool.Name, "-", "_")
-	return fmt.Sprintf("mcp_%s_%s", cleanServer, cleanTool)
+	raw := fmt.Sprintf("mcp_%s_%s", a.serverName, a.tool.Name)
+
+	var b strings.Builder
+	changed := false
+	for _, r := range raw {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '_', r == '-':
+			b.WriteRune(r)
+		default:
+			b.WriteRune('_')
+			changed = true
+		}
+	}
+	name := b.String()
+
+	if !changed && len(name) <= maxToolNameLen {
+		return name
+	}
+	sum := sha256.Sum256([]byte(a.serverName + "\x00" + a.tool.Name))
+	suffix := "_" + hex.EncodeToString(sum[:4])
+	if len(name) > maxToolNameLen-len(suffix) {
+		name = name[:maxToolNameLen-len(suffix)]
+	}
+	return name + suffix
 }
 
 func (a *MCPToolAdapter) Description() string {
@@ -109,17 +140,19 @@ type ServerStatus struct {
 
 // Manager orchestrates multiple external MCP client connections
 type Manager struct {
-	mu       sync.RWMutex
-	clients  map[string]*Client
-	configs  map[string]ServerConfig
-	registry *tools.Registry
+	mu         sync.RWMutex
+	clients    map[string]*Client
+	configs    map[string]ServerConfig
+	connecting map[string]bool
+	registry   *tools.Registry
 }
 
 // NewManager creates an MCP manager instance
 func NewManager() *Manager {
 	return &Manager{
-		clients: make(map[string]*Client),
-		configs: make(map[string]ServerConfig),
+		clients:    make(map[string]*Client),
+		configs:    make(map[string]ServerConfig),
+		connecting: make(map[string]bool),
 	}
 }
 
@@ -139,13 +172,29 @@ func (m *Manager) RegisterServer(cfg ServerConfig) {
 
 // Connect starts a client for a registered server configuration and registers its tools if a registry is bound
 func (m *Manager) Connect(ctx context.Context, name string) (*Client, error) {
-	m.mu.RLock()
+	m.mu.Lock()
 	cfg, ok := m.configs[name]
 	reg := m.registry
-	m.mu.RUnlock()
 	if !ok {
+		m.mu.Unlock()
 		return nil, fmt.Errorf("server configuration %q not found", name)
 	}
+	// Reuse a live connection instead of leaking it by overwriting it.
+	if existing, ok := m.clients[name]; ok {
+		m.mu.Unlock()
+		return existing, nil
+	}
+	if m.connecting[name] {
+		m.mu.Unlock()
+		return nil, fmt.Errorf("server %q is already connecting", name)
+	}
+	m.connecting[name] = true
+	m.mu.Unlock()
+	defer func() {
+		m.mu.Lock()
+		delete(m.connecting, name)
+		m.mu.Unlock()
+	}()
 
 	var transport Transport
 	var err error
@@ -185,7 +234,10 @@ func (m *Manager) Connect(ctx context.Context, name string) (*Client, error) {
 		if mcpTools, err := client.ListTools(ctx); err == nil {
 			for _, t := range mcpTools {
 				adapter := NewMCPToolAdapter(name, client, t)
-				reg.Register(adapter)
+				if err := reg.RegisterUnique(adapter); err != nil {
+					log.Printf("⚠️ [MCP] Skipping tool %q from server %q: %v", t.Name, name, err)
+					continue
+				}
 				log.Printf("🔌 [MCP] Registered tool %s from server %s", adapter.Name(), name)
 			}
 		}
@@ -208,29 +260,40 @@ func (m *Manager) ConnectAllAndRegisterTools(ctx context.Context, reg *tools.Reg
 	for _, name := range names {
 		if _, err := m.Connect(ctx, name); err != nil {
 			log.Printf("⚠️ [MCP] Failed to connect server %q: %v", name, err)
+			continue
 		}
 	}
 	return nil
 }
 
-// ListServers returns status for all managed servers
+// ListServers returns status for all managed servers. Remote calls happen
+// after the lock is released so Close can never be blocked by a slow server.
 func (m *Manager) ListServers(ctx context.Context) []ServerStatus {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	type entry struct {
+		name   string
+		client *Client
+		cfg    ServerConfig
+	}
 
-	res := make([]ServerStatus, 0, len(m.clients))
+	m.mu.RLock()
+	entries := make([]entry, 0, len(m.clients))
 	for name, client := range m.clients {
-		cfg := m.configs[name]
-		toolsList, _ := client.ListTools(ctx)
+		entries = append(entries, entry{name: name, client: client, cfg: m.configs[name]})
+	}
+	m.mu.RUnlock()
+
+	res := make([]ServerStatus, 0, len(entries))
+	for _, e := range entries {
+		toolsList, _ := e.client.ListTools(ctx)
 		toolNames := make([]string, 0, len(toolsList))
 		for _, t := range toolsList {
 			toolNames = append(toolNames, t.Name)
 		}
 
 		res = append(res, ServerStatus{
-			Name:       name,
-			Transport:  cfg.Transport,
-			ServerInfo: client.ServerInfo(),
+			Name:       e.name,
+			Transport:  e.cfg.Transport,
+			ServerInfo: e.client.ServerInfo(),
 			ToolCount:  len(toolsList),
 			Tools:      toolNames,
 		})

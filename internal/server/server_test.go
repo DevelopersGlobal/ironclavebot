@@ -112,3 +112,40 @@ func TestApprovalPolicyAPI(t *testing.T) {
 		t.Errorf("Expected policy strict after update, got %s", engine.Policy())
 	}
 }
+
+func TestWebSocketAndPolicyAreProtected(t *testing.T) {
+	srv, store, _ := setupTestServer(t)
+	srv.cfg.APIToken = "secret"
+	h := srv.Handler()
+
+	// The approval WebSocket must not bypass the API token.
+	req := httptest.NewRequest(http.MethodGet, "/ws/approvals", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("ws without token: got %d, want 401", w.Code)
+	}
+
+	// An unknown policy value is rejected.
+	req = httptest.NewRequest(http.MethodPost, "/api/approvals/policy", strings.NewReader(`{"policy":"bogus"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer secret")
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("bogus policy: got %d, want 400", w.Code)
+	}
+
+	// The streaming chat endpoint only accepts POST.
+	sess, err := store.CreateSession("t")
+	if err != nil {
+		t.Fatal(err)
+	}
+	req = httptest.NewRequest(http.MethodGet, "/api/sessions/"+sess.ID+"/chat/stream?prompt=hi", nil)
+	req.Header.Set("Authorization", "Bearer secret")
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("GET stream: got %d, want 405", w.Code)
+	}
+}
