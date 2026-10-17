@@ -159,14 +159,9 @@ func TestMCPSSETransport(t *testing.T) {
 			flusher.Flush()
 
 			// Wait for POST and send response event
-			// Also stop when the client goes away, so a failed test cannot
-			// leave this handler blocked and hang server.Close().
-			select {
-			case msg := <-postReceived:
-				fmt.Fprintf(w, "event: message\ndata: %s\n\n", msg)
-				flusher.Flush()
-			case <-r.Context().Done():
-			}
+			msg := <-postReceived
+			fmt.Fprintf(w, "event: message\ndata: %s\n\n", msg)
+			flusher.Flush()
 			return
 		}
 

@@ -2,14 +2,19 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
 	"os"
+	"strings"
+	"time"
 
 	"github.com/DevelopersGlobal/ironclavebot/internal/agent"
 	"github.com/DevelopersGlobal/ironclavebot/internal/config"
 	"github.com/DevelopersGlobal/ironclavebot/internal/database"
+	"github.com/DevelopersGlobal/ironclavebot/internal/devrel"
+	"github.com/DevelopersGlobal/ironclavebot/internal/mcp"
 	"github.com/DevelopersGlobal/ironclavebot/internal/provider"
 	"github.com/DevelopersGlobal/ironclavebot/internal/sandbox"
 	"github.com/DevelopersGlobal/ironclavebot/internal/server"
@@ -28,37 +33,39 @@ const Banner = `
 func main() {
 	fmt.Print(Banner)
 
+	// Support optional "./ironclavebot serve" subcommand before flags
+	if len(os.Args) > 1 && os.Args[1] == "serve" {
+		os.Args = append([]string{os.Args[0]}, os.Args[2:]...)
+	}
+
 	port := flag.Int("port", 8080, "Web dashboard port")
 	workdir := flag.String("workdir", "./workspace", "Sandbox isolated working directory")
-	provName := flag.String("provider", "", "LLM provider (mock, openai, ollama)")
-	modelName := flag.String("model", "", "Model name (e.g. gpt-4o, llama3.2)")
+	provName := flag.String("provider", "", "LLM provider (mock, openai, anthropic, deepseek, ollama, vllm)")
+	modelName := flag.String("model", "", "Model name (e.g. gpt-4o, claude-3-5-sonnet-20241022, deepseek-chat, llama3.2)")
 	cliPrompt := flag.String("chat", "", "Run single command turn directly from CLI without web UI")
-	host := flag.String("host", "127.0.0.1", "Dashboard listen address (non-loopback requires API_TOKEN)")
+	secMode := flag.String("security", "", "Security policy tier (strict, interactive, permissive)")
+	mcpConfigPath := flag.String("mcp-config", "", "Path to MCP server configuration JSON file")
+	solveIssueTitle := flag.String("solve-issue", "", "Run autonomous Git issue solver on repository with issue title")
+	reproCmd := flag.String("repro", "", "Reproduction command for issue solver")
+	verifyCmd := flag.String("verify", "", "Verification command for issue solver")
+	targetFile := flag.String("target", "", "Target source file for issue solver")
 	flag.Parse()
 
-	if err := config.LoadDotEnv(".env"); err != nil {
-		log.Fatalf("Failed to read .env: %v", err)
-	}
 	cfg := config.Load()
-
-	// Only flags that were actually passed override the environment, even when
-	// the value equals the flag's default.
-	set := map[string]bool{}
-	flag.Visit(func(f *flag.Flag) { set[f.Name] = true })
-	if set["port"] {
+	if *port != 8080 {
 		cfg.Port = *port
 	}
-	if set["host"] {
-		cfg.Host = *host
-	}
-	if set["workdir"] {
+	if *workdir != "./workspace" {
 		cfg.SandboxWorkdir = *workdir
 	}
-	if set["provider"] {
+	if *provName != "" {
 		cfg.LLMProvider = *provName
 	}
-	if set["model"] {
+	if *modelName != "" {
 		cfg.LLMModel = *modelName
+	}
+	if *secMode != "" {
+		cfg.SecurityMode = *secMode
 	}
 
 	// 1. Initialize persistent database
@@ -67,13 +74,12 @@ func main() {
 		log.Fatalf("Failed to initialize database: %v", err)
 	}
 
-	// 2. Initialize isolated sandbox
-	box := sandbox.New(cfg.SandboxWorkdir, sandbox.Policy(cfg.SecurityMode))
-	if st, err := os.Stat(box.Workdir()); err != nil || !st.IsDir() {
-		log.Fatalf("Sandbox workdir %s is not usable: %v", box.Workdir(), err)
-	}
+	// 2. Initialize isolated sandbox and granular approval engine
+	policy := sandbox.Policy(cfg.SecurityMode)
+	box := sandbox.New(cfg.SandboxWorkdir, policy)
+	approvalEngine := sandbox.NewApprovalEngine(policy, 60*time.Second)
 
-	// 3. Register tools
+	// 3. Register standard built-in tools
 	registry := tools.NewRegistry()
 	registry.Register(tools.NewTerminalTool(box))
 	registry.Register(tools.NewReadFileTool(box))
@@ -81,7 +87,7 @@ func main() {
 
 	// 4. Select LLM provider
 	var llmProvider provider.Provider
-	switch cfg.LLMProvider {
+	switch strings.ToLower(cfg.LLMProvider) {
 	case "openai":
 		if cfg.OpenAIKey == "" {
 			log.Println("⚠️ OPENAI_API_KEY is not set. Falling back to MockProvider.")
@@ -89,16 +95,74 @@ func main() {
 		} else {
 			llmProvider = provider.NewOpenAIProvider("https://api.openai.com/v1", cfg.OpenAIKey)
 		}
-	case "ollama":
+	case "deepseek":
+		if cfg.DeepSeekKey == "" {
+			log.Println("⚠️ DEEPSEEK_API_KEY is not set. Falling back to MockProvider.")
+			llmProvider = provider.NewMockProvider()
+		} else {
+			llmProvider = provider.NewOpenAIProvider("https://api.deepseek.com/v1", cfg.DeepSeekKey)
+		}
+	case "anthropic":
+		if cfg.AnthropicKey == "" {
+			log.Println("⚠️ ANTHROPIC_API_KEY is not set. Falling back to MockProvider.")
+			llmProvider = provider.NewMockProvider()
+		} else {
+			llmProvider = provider.NewAnthropicProvider(cfg.AnthropicKey)
+		}
+	case "ollama", "vllm":
 		llmProvider = provider.NewOpenAIProvider(cfg.OllamaBaseURL+"/v1", "")
 	default:
 		llmProvider = provider.NewMockProvider()
 	}
 
-	// 5. Initialize agent
-	botAgent := agent.NewAgent(cfg.LLMModel, llmProvider, registry, store)
+	// 5. Initialize Git-Native Autonomous DevRel / Issue Solver & register as Agent tool
+	issueSolver := devrel.NewIssueSolver(box, llmProvider, cfg.LLMModel)
+	registry.Register(devrel.NewIssueSolverTool(issueSolver))
 
-	// 6. Direct CLI run mode
+	// 6. Initialize Model Context Protocol (MCP) Manager
+	mcpManager := mcp.NewManager()
+	mcpManager.SetRegistry(registry)
+	if *mcpConfigPath != "" {
+		if data, err := os.ReadFile(*mcpConfigPath); err == nil {
+			var configs []mcp.ServerConfig
+			if err := json.Unmarshal(data, &configs); err == nil {
+				for _, sc := range configs {
+					mcpManager.RegisterServer(sc)
+				}
+				_ = mcpManager.ConnectAllAndRegisterTools(context.Background(), registry)
+			}
+		}
+	}
+
+	// 7. Initialize Agent
+	botAgent := agent.NewAgent(cfg.LLMModel, llmProvider, registry, store)
+	botAgent.SetApprovalEngine(approvalEngine)
+
+	// 8. Direct CLI Issue Solver mode
+	if *solveIssueTitle != "" {
+		fmt.Printf("🔍 Starting Autonomous DevRel Issue Solver: %q\n", *solveIssueTitle)
+		report, err := issueSolver.Solve(context.Background(), devrel.IssueRequest{
+			Title:         *solveIssueTitle,
+			Description:   fmt.Sprintf("Fix requested for %s", *solveIssueTitle),
+			ReproCommand:  *reproCmd,
+			VerifyCommand: *verifyCmd,
+			TargetFile:    *targetFile,
+		})
+		if err != nil {
+			log.Fatalf("❌ Issue solver error: %v", err)
+		}
+
+		fmt.Printf("\n📋 Issue Resolution Report:\n")
+		fmt.Printf("Success: %t\n", report.Success)
+		fmt.Printf("Summary: %s\n", report.Triage.Summary)
+		if report.GitDiff != "" {
+			fmt.Printf("\n📝 Git Patch Diff:\n%s\n", report.GitDiff)
+		}
+		fmt.Printf("\n💡 Suggested Commit:\n%s\n", report.CommitMessage)
+		os.Exit(0)
+	}
+
+	// 9. Direct CLI chat turn mode
 	if *cliPrompt != "" {
 		sess, err := store.CreateSession("CLI Turn")
 		if err != nil {
@@ -113,8 +177,8 @@ func main() {
 		os.Exit(0)
 	}
 
-	// 7. Web Dashboard Server mode
-	srv := server.New(cfg, botAgent, store, box)
+	// 10. Web Dashboard & Server mode
+	srv := server.New(cfg, botAgent, store, box, approvalEngine, issueSolver, mcpManager)
 	if err := srv.Start(); err != nil {
 		log.Fatalf("Server stopped: %v", err)
 	}

@@ -1,10 +1,6 @@
 package mcp
 
-import (
-	"encoding/json"
-	"fmt"
-	"strconv"
-)
+import "encoding/json"
 
 // JSONRPCRequest represents a standard JSON-RPC 2.0 request
 type JSONRPCRequest struct {
@@ -123,48 +119,4 @@ type ContentItem struct {
 type CallToolResult struct {
 	Content []ContentItem `json:"content"`
 	IsError bool          `json:"isError,omitempty"`
-}
-
-// incomingMessage is used to classify anything a server sends: a response
-// (has result/error, no method), a request (method and id) or a notification
-// (method, no id).
-type incomingMessage struct {
-	JSONRPC string          `json:"jsonrpc"`
-	ID      interface{}     `json:"id,omitempty"`
-	Method  string          `json:"method,omitempty"`
-	Params  json.RawMessage `json:"params,omitempty"`
-	Result  json.RawMessage `json:"result,omitempty"`
-	Error   *JSONRPCError   `json:"error,omitempty"`
-}
-
-func (m *incomingMessage) isServerRequest() bool      { return m.Method != "" && m.ID != nil }
-func (m *incomingMessage) isServerNotification() bool { return m.Method != "" && m.ID == nil }
-func (m *incomingMessage) response() *JSONRPCResponse {
-	return &JSONRPCResponse{JSONRPC: m.JSONRPC, ID: m.ID, Result: m.Result, Error: m.Error}
-}
-
-// idKey normalizes a JSON-RPC id so ids decoded from JSON (float64) match the
-// ids this client generated (int64), including values of one million and up.
-func idKey(id interface{}) string {
-	switch v := id.(type) {
-	case float64:
-		return strconv.FormatFloat(v, 'f', -1, 64)
-	case nil:
-		return ""
-	default:
-		return fmt.Sprint(v)
-	}
-}
-
-// replyToServerRequest builds the answer to a request initiated by the server.
-// The client advertises no optional capabilities, so only ping is supported.
-func replyToServerRequest(m *incomingMessage) *JSONRPCResponse {
-	if m.Method == "ping" {
-		return &JSONRPCResponse{JSONRPC: "2.0", ID: m.ID, Result: json.RawMessage(`{}`)}
-	}
-	return &JSONRPCResponse{
-		JSONRPC: "2.0",
-		ID:      m.ID,
-		Error:   &JSONRPCError{Code: -32601, Message: "Method not found: " + m.Method},
-	}
 }

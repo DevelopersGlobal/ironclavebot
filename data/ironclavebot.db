@@ -1,0 +1,52 @@
+{
+  "sessions": {
+    "session-1792243742381928000": {
+      "id": "session-1792243742381928000",
+      "title": "CLI Turn",
+      "created_at": "2026-10-17T18:59:02.381928+05:30",
+      "updated_at": "2026-10-17T18:59:02.381929+05:30",
+      "system_rules": ""
+    },
+    "session-1792244541301782000": {
+      "id": "session-1792244541301782000",
+      "title": "CLI Turn",
+      "created_at": "2026-10-17T19:12:21.301784+05:30",
+      "updated_at": "2026-10-17T19:12:21.301784+05:30",
+      "system_rules": ""
+    }
+  },
+  "messages": {
+    "session-1792243742381928000": [
+      {
+        "id": "msg-1792243742382394000",
+        "session_id": "session-1792243742381928000",
+        "role": "user",
+        "content": "Hello who are you?",
+        "timestamp": "2026-10-17T18:59:02.382394+05:30"
+      },
+      {
+        "id": "msg-1792243742382486000",
+        "session_id": "session-1792243742381928000",
+        "role": "assistant",
+        "content": "🛡️ [IronClaveBot Mock] Received: \"Hello who are you?\". Configure OPENAI_API_KEY or OLLAMA_BASE_URL to enable full autonomous model reasoning.",
+        "timestamp": "2026-10-17T18:59:02.382486+05:30"
+      }
+    ],
+    "session-1792244541301782000": [
+      {
+        "id": "msg-1792244541302174000",
+        "session_id": "session-1792244541301782000",
+        "role": "user",
+        "content": "Ping IronClaveBot",
+        "timestamp": "2026-10-17T19:12:21.302175+05:30"
+      },
+      {
+        "id": "msg-1792244541475939000",
+        "session_id": "session-1792244541301782000",
+        "role": "assistant",
+        "content": "🛡️ [IronClaveBot Mock] Received: \"Ping IronClaveBot\". Configure OPENAI_API_KEY or OLLAMA_BASE_URL to enable full autonomous model reasoning.",
+        "timestamp": "2026-10-17T19:12:21.475949+05:30"
+      }
+    ]
+  }
+}

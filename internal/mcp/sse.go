@@ -25,14 +25,11 @@ type SSETransport struct {
 	cancelSSE   context.CancelFunc
 	pendingMu   sync.Mutex
 	pending     map[string]chan *JSONRPCResponse
-	dead        bool // SSE stream ended; guarded by pendingMu
 	closed      atomic.Bool
 	endpointRdy chan struct{}
 }
 
-// NewSSETransport establishes an SSE connection to a remote MCP server.
-// ctx bounds connection setup only; once the transport is returned, the
-// stream lives until Close is called.
+// NewSSETransport establishes an SSE connection to a remote MCP server
 func NewSSETransport(ctx context.Context, sseURL string, headers map[string]string) (*SSETransport, error) {
 	parsedURL, err := url.Parse(sseURL)
 	if err != nil {
@@ -40,18 +37,6 @@ func NewSSETransport(ctx context.Context, sseURL string, headers map[string]stri
 	}
 
 	sseCtx, cancel := context.WithCancel(context.Background())
-
-	// Forward cancellation of the caller's context to the stream request
-	// while we are still constructing; detach once construction returns.
-	constructed := make(chan struct{})
-	defer close(constructed)
-	go func() {
-		select {
-		case <-ctx.Done():
-			cancel()
-		case <-constructed:
-		}
-	}()
 
 	t := &SSETransport{
 		sseURL:      parsedURL.String(),
@@ -97,7 +82,7 @@ func NewSSETransport(ctx context.Context, sseURL string, headers map[string]stri
 		// Fallback: If no endpoint event arrived, default post URL to the base SSE URL
 		t.setPostURL(t.sseURL)
 	case <-ctx.Done():
-		_ = t.Close()
+		t.Close()
 		return nil, ctx.Err()
 	}
 
@@ -145,116 +130,51 @@ func (t *SSETransport) sseListenLoop(body io.ReadCloser) {
 	scanner.Buffer(buf, 16*1024*1024)
 
 	var currentEvent string
-	var dataLines []string
-
-	dispatch := func() {
-		if len(dataLines) == 0 {
-			currentEvent = ""
-			return
-		}
-		// Multiple data: lines form one payload joined by newlines.
-		data := strings.Join(dataLines, "\n")
-		event := currentEvent
-		dataLines = nil
-		currentEvent = ""
-		t.handleEvent(event, data)
-	}
 
 	for scanner.Scan() {
 		line := scanner.Text()
 		if line == "" {
-			dispatch()
+			currentEvent = ""
 			continue
 		}
-		if strings.HasPrefix(line, ":") {
-			continue // comment / keep-alive
+
+		if strings.HasPrefix(line, "event:") {
+			currentEvent = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
+			continue
 		}
 
-		field, value, _ := strings.Cut(line, ":")
-		value = strings.TrimPrefix(value, " ")
-		switch field {
-		case "event":
-			currentEvent = strings.TrimSpace(value)
-		case "data":
-			dataLines = append(dataLines, value)
+		if strings.HasPrefix(line, "data:") {
+			data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+
+			if currentEvent == "endpoint" {
+				t.setPostURL(data)
+				continue
+			}
+
+			// Handle JSON-RPC message event
+			var rpcResp JSONRPCResponse
+			if err := json.Unmarshal([]byte(data), &rpcResp); err == nil && rpcResp.ID != nil {
+				idKey := fmt.Sprint(rpcResp.ID)
+				t.pendingMu.Lock()
+				ch, ok := t.pending[idKey]
+				if ok {
+					delete(t.pending, idKey)
+				}
+				t.pendingMu.Unlock()
+
+				if ok && ch != nil {
+					ch <- &rpcResp
+				}
+			}
 		}
 	}
 
-	// Stream ended: mark the transport dead and release waiters under the
-	// same lock Send uses to register, so later requests fail fast.
 	t.pendingMu.Lock()
-	t.dead = true
 	for k, ch := range t.pending {
 		close(ch)
 		delete(t.pending, k)
 	}
 	t.pendingMu.Unlock()
-}
-
-func (t *SSETransport) handleEvent(event, data string) {
-	if event == "endpoint" {
-		t.setPostURL(strings.TrimSpace(data))
-		return
-	}
-
-	var msg incomingMessage
-	if err := json.Unmarshal([]byte(data), &msg); err != nil {
-		return
-	}
-
-	switch {
-	case msg.isServerRequest():
-		go t.answerServerRequest(&msg)
-	case msg.isServerNotification():
-		// No reply needed.
-	case msg.ID != nil:
-		key := idKey(msg.ID)
-		t.pendingMu.Lock()
-		ch, ok := t.pending[key]
-		if ok {
-			delete(t.pending, key)
-		}
-		t.pendingMu.Unlock()
-		if ok && ch != nil {
-			ch <- msg.response()
-		}
-	}
-}
-
-func (t *SSETransport) answerServerRequest(msg *incomingMessage) {
-	postTarget := t.getPostURL()
-	if postTarget == "" || t.closed.Load() {
-		return
-	}
-	payload, err := json.Marshal(replyToServerRequest(msg))
-	if err != nil {
-		return
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, postTarget, bytes.NewReader(payload))
-	if err != nil {
-		return
-	}
-	req.Header.Set("Content-Type", "application/json")
-	for k, v := range t.headers {
-		req.Header.Set(k, v)
-	}
-	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
-	if err == nil {
-		_ = resp.Body.Close()
-	}
-}
-
-// httpStatusError builds an error for a rejected POST, including a short
-// excerpt of the response body.
-func httpStatusError(what string, resp *http.Response) error {
-	excerpt, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-	msg := strings.TrimSpace(string(excerpt))
-	if msg != "" {
-		return fmt.Errorf("%s rejected with HTTP %d: %s", what, resp.StatusCode, msg)
-	}
-	return fmt.Errorf("%s rejected with HTTP %d", what, resp.StatusCode)
 }
 
 func (t *SSETransport) Send(ctx context.Context, req *JSONRPCRequest) (*JSONRPCResponse, error) {
@@ -267,20 +187,16 @@ func (t *SSETransport) Send(ctx context.Context, req *JSONRPCRequest) (*JSONRPCR
 		return nil, fmt.Errorf("MCP post endpoint has not been resolved")
 	}
 
-	key := idKey(req.ID)
+	idKey := fmt.Sprint(req.ID)
 	ch := make(chan *JSONRPCResponse, 1)
 
 	t.pendingMu.Lock()
-	if t.dead {
-		t.pendingMu.Unlock()
-		return nil, fmt.Errorf("SSE transport is closed: event stream ended")
-	}
-	t.pending[key] = ch
+	t.pending[idKey] = ch
 	t.pendingMu.Unlock()
 
 	defer func() {
 		t.pendingMu.Lock()
-		delete(t.pending, key)
+		delete(t.pending, idKey)
 		t.pendingMu.Unlock()
 	}()
 
@@ -306,19 +222,13 @@ func (t *SSETransport) Send(ctx context.Context, req *JSONRPCRequest) (*JSONRPCR
 	}
 	defer resp.Body.Close()
 
-	// Rejected requests (401, 404, 500, ...) fail now instead of waiting for
-	// an SSE reply that will never come.
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return nil, httpStatusError("MCP request", resp)
-	}
-
 	// Some MCP servers immediately return the JSON-RPC response in the HTTP response body
 	if resp.StatusCode == http.StatusOK {
 		respBody, readErr := io.ReadAll(resp.Body)
 		if readErr == nil && len(respBody) > 0 {
-			var direct incomingMessage
-			if err := json.Unmarshal(respBody, &direct); err == nil && direct.ID != nil && direct.Method == "" {
-				return direct.response(), nil
+			var directResp JSONRPCResponse
+			if err := json.Unmarshal(respBody, &directResp); err == nil && directResp.ID != nil {
+				return &directResp, nil
 			}
 		}
 	}
@@ -364,10 +274,7 @@ func (t *SSETransport) Notify(ctx context.Context, req *JSONRPCRequest) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return httpStatusError("MCP notification", resp)
-	}
+	_ = resp.Body.Close()
 	return nil
 }
 

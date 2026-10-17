@@ -12,11 +12,16 @@
         extend: {
           colors: {
             clave: {
+              950: '#07090E',
               900: '#0B0F19',
+              850: '#0E1422',
               800: '#111827',
+              750: '#172033',
               700: '#1F2937',
               accent: '#06B6D4',
-              shield: '#10B981'
+              shield: '#10B981',
+              danger: '#EF4444',
+              amber: '#F59E0B'
             }
           }
         }
@@ -24,127 +29,441 @@
     }
   </script>
   <style>
-    pre code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+    pre code, pre, .font-mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; }
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: #0b0f19; }
+    ::-webkit-scrollbar-thumb { background: #1f2937; border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: #374151; }
+    @keyframes pulse-fast { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+    .animate-pulse-fast { animation: pulse-fast 1s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
   </style>
 </head>
-<body class="bg-clave-900 text-gray-100 flex h-screen overflow-hidden font-sans antialiased">
+<body class="bg-clave-950 text-gray-100 flex h-screen overflow-hidden font-sans antialiased select-none">
 
   <!-- Sidebar -->
-  <aside class="w-72 bg-clave-800 border-r border-gray-800 flex flex-col justify-between">
-    <div class="p-4 flex flex-col h-full">
-      <div class="flex items-center gap-3 mb-6">
-        <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-cyan-500 to-emerald-500 flex items-center justify-center font-bold text-white shadow-lg shadow-cyan-500/20">
+  <aside class="w-72 bg-clave-900 border-r border-gray-800 flex flex-col justify-between shrink-0">
+    <div class="p-4 flex flex-col h-full overflow-hidden">
+      <!-- Logo Header -->
+      <div class="flex items-center gap-3 mb-5">
+        <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-cyan-500 via-teal-500 to-emerald-500 flex items-center justify-center font-bold text-white shadow-lg shadow-cyan-500/20 shrink-0">
           🛡️
         </div>
-        <div>
-          <h1 class="font-bold text-lg leading-tight tracking-wide text-white">IronClaveBot</h1>
-          <p class="text-xs text-gray-400">by DevelopersGlobal</p>
+        <div class="truncate">
+          <h1 class="font-bold text-base leading-tight tracking-wide text-white flex items-center gap-1.5">
+            IronClaveBot
+            <span class="text-[10px] px-1.5 py-0.2 rounded bg-cyan-950 text-cyan-400 border border-cyan-800">v1.2</span>
+          </h1>
+          <p class="text-xs text-gray-400 truncate">by DevelopersGlobal</p>
         </div>
       </div>
 
-      <button id="newSessionBtn" class="w-full py-2.5 px-4 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white font-medium text-sm flex items-center justify-center gap-2 transition shadow-md shadow-cyan-900/30 mb-4">
-        <span>+</span> New Session
-      </button>
+      <!-- Action Buttons -->
+      <div class="space-y-2 mb-4">
+        <button id="newSessionBtn" class="w-full py-2.5 px-3 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white font-medium text-xs flex items-center justify-center gap-2 transition shadow-md shadow-cyan-900/30">
+          <span>+</span> New Teammate Session
+        </button>
 
-      <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2 px-1">Recent Sessions</div>
+        <button id="openDevRelModalBtn" class="w-full py-2 px-3 rounded-lg bg-clave-800 hover:bg-clave-750 text-gray-200 border border-gray-700/80 font-medium text-xs flex items-center justify-center gap-2 transition hover:border-cyan-500/50">
+          <span>🛠️</span> Git DevRel Issue Solver
+        </button>
+      </div>
+
+      <!-- Session List Header -->
+      <div class="flex items-center justify-between text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2 px-1">
+        <span>Recent Sessions</span>
+        <span id="sessionCountBadge" class="text-[10px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-400">0</span>
+      </div>
+
+      <!-- Session List -->
       <div id="sessionList" class="flex-1 overflow-y-auto space-y-1 pr-1 text-sm">
-        <!-- Dynamically populated -->
+        <!-- Populated via JS -->
+      </div>
+
+      <!-- MCP Integration Status -->
+      <div class="mt-3 pt-3 border-t border-gray-800/80 text-xs">
+        <div class="flex items-center justify-between text-gray-400 mb-1">
+          <span class="flex items-center gap-1.5">
+            <span class="w-1.5 h-1.5 rounded-full bg-cyan-400"></span>
+            MCP Registry
+          </span>
+          <span id="mcpToolCount" class="text-cyan-400 font-mono">stdio + sse</span>
+        </div>
       </div>
     </div>
 
     <!-- Security Status Footer -->
-    <div class="p-4 border-t border-gray-800 bg-clave-900/60">
-      <div class="flex items-center justify-between text-xs mb-1.5">
-        <span class="text-gray-400">Sandbox Status</span>
+    <div class="p-4 border-t border-gray-800 bg-clave-900/90 space-y-2">
+      <div class="flex items-center justify-between text-xs">
+        <span class="text-gray-400">Sandbox Isolation</span>
         <span class="text-emerald-400 font-medium flex items-center gap-1.5">
-          <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span> ISOLATED
+          <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span> ACTIVE
         </span>
       </div>
       <div class="flex items-center justify-between text-xs">
-        <span class="text-gray-400">Memory Engine</span>
-        <span class="text-cyan-400 font-mono">SQLite WAL</span>
+        <span class="text-gray-400">Approval Policy</span>
+        <select id="policySelector" class="bg-gray-800 text-cyan-300 font-mono text-[11px] rounded px-1.5 py-0.5 border border-gray-700 focus:outline-none">
+          <option value="strict">strict</option>
+          <option value="interactive" selected>interactive</option>
+          <option value="permissive">permissive</option>
+        </select>
       </div>
     </div>
   </aside>
 
   <!-- Main Chat Workspace -->
-  <main class="flex-1 flex flex-col h-full bg-clave-900">
+  <main class="flex-1 flex flex-col h-full bg-clave-950 overflow-hidden select-text">
     <!-- Topbar -->
-    <header class="h-16 border-b border-gray-800 flex items-center justify-between px-6 bg-clave-800/40 backdrop-blur">
+    <header class="h-16 border-b border-gray-800 flex items-center justify-between px-6 bg-clave-900/60 backdrop-blur shrink-0">
       <div class="flex items-center gap-3">
-        <span id="currentSessionTitle" class="font-semibold text-gray-200">Main Workspace</span>
-        <span class="text-xs px-2.5 py-0.5 rounded-full bg-cyan-950 text-cyan-300 border border-cyan-800" id="modelBadge">Loading Model...</span>
+        <span id="currentSessionTitle" class="font-semibold text-gray-200 text-sm">Main Workspace</span>
+        <span class="text-xs px-2.5 py-0.5 rounded-full bg-cyan-950 text-cyan-300 border border-cyan-800 font-mono" id="modelBadge">Loading Model...</span>
+        <span id="wsStatusBadge" class="text-[10px] px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-400 border border-emerald-800 flex items-center gap-1">
+          <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span> WS Connected
+        </span>
       </div>
-      <div class="flex items-center gap-3 text-xs text-gray-400">
-        <span class="px-2 py-1 rounded bg-gray-800 border border-gray-700">Zero-Escape Policy</span>
-        <a href="https://github.com/DevelopersGlobal" target="_blank" class="hover:text-white transition">GitHub Org ↗</a>
+
+      <div class="flex items-center gap-3 text-xs">
+        <!-- Voice Synth Toggle -->
+        <button id="voiceToggleBtn" title="Toggle Text-to-Speech Output" class="px-2.5 py-1 rounded-lg bg-gray-800 text-gray-300 hover:text-white border border-gray-700 flex items-center gap-1.5 transition">
+          <span id="voiceIcon">🔈</span> <span id="voiceLabel">Voice Synth: Off</span>
+        </button>
+
+        <span class="px-2.5 py-1 rounded bg-gray-800/80 border border-gray-700 text-gray-400">Zero-Escape Enclave</span>
+        <a href="https://github.com/DevelopersGlobal" target="_blank" class="text-gray-400 hover:text-white transition flex items-center gap-1">GitHub Org ↗</a>
       </div>
     </header>
 
     <!-- Message Stream -->
     <div id="chatStream" class="flex-1 overflow-y-auto p-6 space-y-4">
-      <div class="max-w-3xl mx-auto flex gap-4 p-4 rounded-xl bg-clave-800/50 border border-gray-800 text-sm">
+      <div class="max-w-3xl mx-auto flex gap-4 p-4 rounded-xl bg-clave-900/70 border border-gray-800/80 text-sm shadow-sm">
         <div class="text-xl">🛡️</div>
         <div>
-          <p class="font-semibold text-cyan-400 mb-1">IronClaveBot Guardrail Active</p>
-          <p class="text-gray-300">I am your persistent, sandboxed developer teammate. Filesystem modifications and shell operations are restricted within your local isolated workspace.</p>
+          <p class="font-semibold text-cyan-400 mb-1 flex items-center gap-2">
+            IronClaveBot Guardrail Active
+            <span class="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-950 text-emerald-400 border border-emerald-800">Hardened</span>
+          </p>
+          <p class="text-gray-300 leading-relaxed">
+            Persistent, security-first AI teammate with Model Context Protocol (MCP) tool expansion, Git-native issue resolution, and real-time approval barriers.
+          </p>
         </div>
       </div>
     </div>
 
+    <!-- Active Thought & Reasoning Streaming Container (Live when agent is thinking) -->
+    <div id="streamingThoughtCard" class="hidden max-w-3xl mx-auto w-full px-6 py-2">
+      <details open class="bg-clave-900 border border-cyan-800/50 rounded-xl p-3 text-xs text-cyan-200/90 shadow-lg">
+        <summary class="font-semibold text-cyan-400 cursor-pointer flex items-center justify-between">
+          <span class="flex items-center gap-2">
+            <span class="w-2 h-2 rounded-full bg-cyan-400 animate-pulse-fast"></span>
+            Agent Real-time Reasoning Trace
+          </span>
+          <span class="text-[10px] text-gray-500 uppercase tracking-widest font-mono">Live</span>
+        </summary>
+        <pre id="streamingThoughtContent" class="mt-2 whitespace-pre-wrap font-mono text-[11px] text-cyan-300/80 max-h-40 overflow-y-auto"></pre>
+      </details>
+    </div>
+
     <!-- Input Bar -->
-    <footer class="p-4 border-t border-gray-800 bg-clave-800/30">
+    <footer class="p-4 border-t border-gray-800 bg-clave-900/40 shrink-0">
       <div class="max-w-3xl mx-auto">
         <form id="chatForm" class="relative flex items-center">
-          <textarea id="promptInput" rows="1" placeholder="Instruct your teammate (e.g., 'Check workspace files', 'Run unit tests')..." class="w-full bg-clave-800 border border-gray-700 focus:border-cyan-500 rounded-xl px-4 py-3 pr-24 text-sm text-gray-200 focus:outline-none resize-none transition"></textarea>
-          <button type="submit" id="sendBtn" class="absolute right-2 px-4 py-1.5 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white text-sm font-medium transition flex items-center gap-1 shadow">
-            Send ↵
-          </button>
+          <textarea id="promptInput" rows="1" placeholder="Instruct your teammate (e.g. 'Triage issue #42', 'Run test suite', 'Read source file')..." class="w-full bg-clave-900 border border-gray-700/80 focus:border-cyan-500 rounded-xl px-4 py-3.5 pr-32 text-sm text-gray-200 focus:outline-none resize-none transition shadow-inner"></textarea>
+
+          <div class="absolute right-2 flex items-center gap-1.5">
+            <!-- Speech-to-Text Mic Button -->
+            <button type="button" id="micBtn" title="Dictate voice command" class="p-2 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white transition">
+              🎙️
+            </button>
+            <button type="submit" id="sendBtn" class="px-3.5 py-1.5 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white text-sm font-medium transition flex items-center gap-1 shadow-md shadow-cyan-900/30">
+              Send ↵
+            </button>
+          </div>
         </form>
-        <div class="flex items-center justify-between mt-2 px-1 text-[11px] text-gray-500">
-          <span>Commands execute in sandboxed workspace</span>
-          <span>Press Enter to send, Shift+Enter for newline</span>
+
+        <div class="flex items-center justify-between mt-2 px-1 text-[11px] text-gray-500 font-mono">
+          <span>Sandbox directory isolated • Granular approval guard active</span>
+          <span>Shift+Enter for newline</span>
         </div>
       </div>
     </footer>
   </main>
 
+  <!-- Interactive Security Approval Modal -->
+  <div id="approvalModal" class="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 flex items-center justify-center hidden p-4">
+    <div class="bg-clave-900 border-2 border-amber-500/80 rounded-2xl max-w-lg w-full p-6 shadow-2xl shadow-amber-950/40 text-sm">
+      <div class="flex items-start justify-between mb-4">
+        <div class="flex items-center gap-3">
+          <div class="w-10 h-10 rounded-xl bg-amber-950 border border-amber-600 flex items-center justify-center text-xl">
+            ⚠️
+          </div>
+          <div>
+            <h3 class="font-bold text-white text-base">Security Approval Gate</h3>
+            <p class="text-xs text-amber-400 font-mono" id="approvalToolTitle">run_command</p>
+          </div>
+        </div>
+        <span id="approvalRiskBadge" class="text-xs font-bold px-2.5 py-1 rounded bg-red-950 text-red-400 border border-red-800 uppercase font-mono">HIGH RISK</span>
+      </div>
+
+      <p class="text-gray-300 mb-3 text-xs leading-relaxed" id="approvalExplanation">
+        The agent requested execution of a privileged command inside the sandbox enclave.
+      </p>
+
+      <div class="mb-4">
+        <div class="text-[11px] text-gray-400 uppercase tracking-wider mb-1 font-mono">Requested Arguments:</div>
+        <pre id="approvalArgsBox" class="p-3 rounded-lg bg-clave-950 border border-gray-800 text-xs font-mono text-cyan-300 whitespace-pre-wrap max-h-48 overflow-y-auto"></pre>
+      </div>
+
+      <div class="flex items-center justify-end gap-3 pt-2 border-t border-gray-800">
+        <button id="rejectApprovalBtn" class="px-4 py-2 rounded-lg bg-red-950/80 hover:bg-red-900 text-red-300 border border-red-800 font-medium text-xs transition">
+          Reject Execution
+        </button>
+        <button id="confirmApprovalBtn" class="px-5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-medium text-xs shadow-lg shadow-emerald-900/40 transition">
+          Authorize & Execute
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Git DevRel Issue Solver Modal -->
+  <div id="devRelModal" class="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 flex items-center justify-center hidden p-4">
+    <div class="bg-clave-900 border border-gray-700 rounded-2xl max-w-2xl w-full p-6 shadow-2xl text-sm flex flex-col max-h-[90vh]">
+      <div class="flex items-center justify-between pb-4 border-b border-gray-800">
+        <div class="flex items-center gap-2">
+          <span class="text-xl">🛠️</span>
+          <h3 class="font-bold text-white text-base">Autonomous Git DevRel / Issue Solver</h3>
+        </div>
+        <button id="closeDevRelBtn" class="text-gray-400 hover:text-white text-lg">✕</button>
+      </div>
+
+      <div class="flex-1 overflow-y-auto py-4 space-y-4">
+        <div>
+          <label class="block text-xs font-semibold text-gray-300 mb-1">Issue Title / Problem Statement *</label>
+          <input type="text" id="solverTitle" placeholder="e.g. Broken nil pointer dereference in auth handler" class="w-full bg-clave-950 border border-gray-700 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-500">
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-gray-300 mb-1">Issue Description / Failure Context</label>
+          <textarea id="solverDescription" rows="2" placeholder="Describe the bug, user scenario, or error message..." class="w-full bg-clave-950 border border-gray-700 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-500"></textarea>
+        </div>
+
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs font-semibold text-gray-300 mb-1">Reproduction Command</label>
+            <input type="text" id="solverReproCmd" placeholder="e.g. go test -v -run TestBrokenAuth" class="w-full bg-clave-950 border border-gray-700 rounded-lg px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-cyan-500">
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-gray-300 mb-1">Verification Command</label>
+            <input type="text" id="solverVerifyCmd" placeholder="e.g. go test -v ./..." class="w-full bg-clave-950 border border-gray-700 rounded-lg px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-cyan-500">
+          </div>
+        </div>
+
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs font-semibold text-gray-300 mb-1">Target Source File (optional)</label>
+            <input type="text" id="solverTargetFile" placeholder="e.g. internal/auth/handler.go" class="w-full bg-clave-950 border border-gray-700 rounded-lg px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-cyan-500">
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-gray-300 mb-1">Proposed Patch Content (optional)</label>
+            <input type="text" id="solverProposedPatch" placeholder="Direct patch code override" class="w-full bg-clave-950 border border-gray-700 rounded-lg px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-cyan-500">
+          </div>
+        </div>
+
+        <!-- Solver Results Box -->
+        <div id="solverOutputCard" class="hidden p-4 rounded-xl bg-clave-950 border border-gray-800 space-y-3">
+          <div class="flex items-center justify-between text-xs">
+            <span class="font-bold text-cyan-400">Resolution Status:</span>
+            <span id="solverStatusTag" class="px-2 py-0.5 rounded font-mono font-bold"></span>
+          </div>
+          <div class="text-xs text-gray-300" id="solverSummaryText"></div>
+          <div>
+            <div class="text-[11px] font-mono text-gray-400 uppercase tracking-wider mb-1">Unified Git Diff:</div>
+            <pre id="solverDiffBox" class="p-3 rounded-lg bg-black border border-gray-800 text-[11px] font-mono text-emerald-400 whitespace-pre-wrap max-h-48 overflow-y-auto"></pre>
+          </div>
+          <div>
+            <div class="text-[11px] font-mono text-gray-400 uppercase tracking-wider mb-1">Suggested Commit:</div>
+            <pre id="solverCommitBox" class="p-2 rounded bg-gray-900 border border-gray-800 text-xs font-mono text-gray-300"></pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="pt-4 border-t border-gray-800 flex justify-end gap-2">
+        <button id="runSolverBtn" class="px-5 py-2 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white font-medium text-xs shadow-md transition flex items-center gap-2">
+          <span>🚀</span> Execute Autonomous DevRel Solver
+        </button>
+      </div>
+    </div>
+  </div>
+
   <script>
     let activeSessionId = null;
-    let apiToken = sessionStorage.getItem('ironclave_api_token') || '';
+    let voiceSynthActive = false;
+    let ws = null;
+    let currentApprovalReq = null;
 
-    // All API calls go through here so the optional API token is attached and
-    // a 401 prompts for it once.
-    async function apiFetch(url, options = {}) {
-      const send = () => {
-        const headers = Object.assign({}, options.headers || {});
-        if (apiToken) headers['Authorization'] = 'Bearer ' + apiToken;
-        return fetch(url, Object.assign({}, options, { headers }));
+    // 1. Initialize WebSocket for Interactive Approval Bus
+    function initWebSocket() {
+      const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = `${proto}//${window.location.host}/ws/approvals`;
+      ws = new WebSocket(wsUrl);
+
+      ws.onopen = () => {
+        document.getElementById('wsStatusBadge').className = 'text-[10px] px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-400 border border-emerald-800 flex items-center gap-1';
+        document.getElementById('wsStatusBadge').innerHTML = '<span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span> WS Connected';
       };
-      let res = await send();
-      if (res.status === 401) {
-        const entered = window.prompt('This IronClaveBot requires an API token:');
-        if (entered) {
-          apiToken = entered.trim();
-          sessionStorage.setItem('ironclave_api_token', apiToken);
-          res = await send();
+
+      ws.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+          if (msg.type === 'approval_request' && msg.payload) {
+            showApprovalModal(msg.payload);
+          }
+        } catch (e) {
+          console.error('WS parse error:', e);
         }
+      };
+
+      ws.onclose = () => {
+        document.getElementById('wsStatusBadge').className = 'text-[10px] px-2 py-0.5 rounded-full bg-red-950 text-red-400 border border-red-800 flex items-center gap-1';
+        document.getElementById('wsStatusBadge').innerHTML = '<span class="w-1.5 h-1.5 rounded-full bg-red-400"></span> WS Offline';
+        setTimeout(initWebSocket, 3000);
+      };
+    }
+
+    // 2. Approval Modal Handlers
+    function showApprovalModal(req) {
+      if (req.status !== 'pending') {
+        hideApprovalModal();
+        return;
       }
-      return res;
+      currentApprovalReq = req;
+      document.getElementById('approvalToolTitle').textContent = req.tool_name || 'Tool Execution';
+      document.getElementById('approvalExplanation').textContent = req.explanation || 'Privileged action requires human approval.';
+      document.getElementById('approvalArgsBox').textContent = req.arguments || '(empty args)';
+
+      const riskBadge = document.getElementById('approvalRiskBadge');
+      if (req.risk_level === 'high') {
+        riskBadge.className = 'text-xs font-bold px-2.5 py-1 rounded bg-red-950 text-red-400 border border-red-800 uppercase font-mono';
+        riskBadge.textContent = 'HIGH RISK';
+      } else if (req.risk_level === 'medium') {
+        riskBadge.className = 'text-xs font-bold px-2.5 py-1 rounded bg-amber-950 text-amber-400 border border-amber-800 uppercase font-mono';
+        riskBadge.textContent = 'MEDIUM RISK';
+      } else {
+        riskBadge.className = 'text-xs font-bold px-2.5 py-1 rounded bg-emerald-950 text-emerald-400 border border-emerald-800 uppercase font-mono';
+        riskBadge.textContent = 'LOW RISK';
+      }
+
+      document.getElementById('approvalModal').classList.remove('hidden');
     }
 
-    async function errorText(res) {
-      const text = (await res.text()).trim();
-      return text || ('HTTP ' + res.status);
+    function hideApprovalModal() {
+      document.getElementById('approvalModal').classList.add('hidden');
+      currentApprovalReq = null;
     }
 
+    function submitApproval(approved) {
+      if (!currentApprovalReq) return;
+      const reqId = currentApprovalReq.id;
+
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'decision', id: reqId, approved: approved }));
+      }
+      fetch(`/api/approvals/${reqId}/decision`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ approved: approved })
+      }).catch(console.error);
+
+      hideApprovalModal();
+    }
+
+    document.getElementById('confirmApprovalBtn').onclick = () => submitApproval(true);
+    document.getElementById('rejectApprovalBtn').onclick = () => submitApproval(false);
+
+    // 3. Security Policy Selector
+    document.getElementById('policySelector').addEventListener('change', async (e) => {
+      const newPolicy = e.target.value;
+      try {
+        await fetch('/api/approvals/policy', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ policy: newPolicy })
+        });
+      } catch (err) {
+        console.error('Failed to change policy:', err);
+      }
+    });
+
+    // 4. Voice Synth (Text-to-Speech)
+    const voiceToggleBtn = document.getElementById('voiceToggleBtn');
+    voiceToggleBtn.onclick = () => {
+      voiceSynthActive = !voiceSynthActive;
+      if (voiceSynthActive) {
+        document.getElementById('voiceIcon').textContent = '🔊';
+        document.getElementById('voiceLabel').textContent = 'Voice Synth: ON';
+        voiceToggleBtn.className = 'px-2.5 py-1 rounded-lg bg-cyan-950 text-cyan-300 border border-cyan-800 flex items-center gap-1.5 transition';
+      } else {
+        document.getElementById('voiceIcon').textContent = '🔈';
+        document.getElementById('voiceLabel').textContent = 'Voice Synth: Off';
+        voiceToggleBtn.className = 'px-2.5 py-1 rounded-lg bg-gray-800 text-gray-300 hover:text-white border border-gray-700 flex items-center gap-1.5 transition';
+        if (window.speechSynthesis) window.speechSynthesis.cancel();
+      }
+    };
+
+    function speakText(text) {
+      if (!voiceSynthActive || !window.speechSynthesis) return;
+      window.speechSynthesis.cancel();
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.rate = 1.05;
+      utterance.pitch = 0.95;
+      window.speechSynthesis.speak(utterance);
+    }
+
+    // 5. Speech-to-Text Voice Dictation
+    const micBtn = document.getElementById('micBtn');
+    if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      const recognizer = new SpeechRecognition();
+      recognizer.continuous = false;
+      recognizer.interimResults = false;
+
+      let listening = false;
+      micBtn.onclick = () => {
+        if (!listening) {
+          recognizer.start();
+          listening = true;
+          micBtn.className = 'p-2 rounded-lg bg-red-600 text-white animate-pulse transition';
+        } else {
+          recognizer.stop();
+          listening = false;
+          micBtn.className = 'p-2 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white transition';
+        }
+      };
+
+      recognizer.onresult = (evt) => {
+        const transcript = evt.results[0][0].transcript;
+        const input = document.getElementById('promptInput');
+        input.value = input.value ? input.value + ' ' + transcript : transcript;
+        listening = false;
+        micBtn.className = 'p-2 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white transition';
+      };
+
+      recognizer.onerror = () => {
+        listening = false;
+        micBtn.className = 'p-2 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white transition';
+      };
+    } else {
+      micBtn.style.display = 'none';
+    }
+
+    // 6. Session Management
     async function fetchSessions() {
       try {
-        const res = await apiFetch('/api/sessions');
-        if (!res.ok) throw new Error(await errorText(res));
+        const res = await fetch('/api/sessions');
         const data = await res.json();
         const list = document.getElementById('sessionList');
         list.innerHTML = '';
+        document.getElementById('sessionCountBadge').textContent = data.length;
+
         data.forEach(s => {
           const btn = document.createElement('button');
           btn.className = `w-full text-left px-3 py-2 rounded-lg truncate transition ${s.id === activeSessionId ? 'bg-gray-800 text-cyan-400 font-medium' : 'text-gray-400 hover:bg-gray-800/60'}`;
@@ -164,8 +483,11 @@
     }
 
     async function createNewSession() {
-      const res = await apiFetch('/api/sessions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: 'Workspace #' + Math.floor(Math.random() * 1000) }) });
-      if (!res.ok) { appendMessageUI({ role: 'assistant', content: 'Could not create a session: ' + await errorText(res) }); return; }
+      const res = await fetch('/api/sessions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: 'Workspace #' + Math.floor(Math.random() * 1000) })
+      });
       const session = await res.json();
       activeSessionId = session.id;
       await fetchSessions();
@@ -179,12 +501,8 @@
     }
 
     async function loadMessages(id) {
-      const res = await apiFetch(`/api/sessions/${id}/messages`);
-      if (id !== activeSessionId) return; // a newer selection replaced this one
-      if (!res.ok) throw new Error(await errorText(res));
+      const res = await fetch(`/api/sessions/${id}/messages`);
       const msgs = await res.json();
-      // Re-check after the body is read: responses can finish out of order.
-      if (id !== activeSessionId) return;
       const stream = document.getElementById('chatStream');
       stream.innerHTML = '';
       msgs.forEach(appendMessageUI);
@@ -198,23 +516,25 @@
 
       if (m.role === 'user') {
         row.innerHTML = `
-          <div class="w-8 h-8 rounded-lg bg-gray-700 flex items-center justify-center text-sm font-bold text-gray-300 shrink-0">U</div>
-          <div class="flex-1 bg-gray-800/70 border border-gray-700/60 rounded-xl p-4 text-sm text-gray-200">
+          <div class="w-8 h-8 rounded-lg bg-gray-800 border border-gray-700 flex items-center justify-center text-sm font-bold text-gray-300 shrink-0">U</div>
+          <div class="flex-1 bg-clave-900 border border-gray-800 rounded-xl p-4 text-sm text-gray-200">
             ${escapeHtml(m.content)}
           </div>
         `;
       } else if (m.role === 'tool') {
         row.innerHTML = `
-          <div class="w-8 h-8 rounded-lg bg-amber-900/50 border border-amber-600/50 flex items-center justify-center text-xs shrink-0">⚙️</div>
-          <div class="flex-1 bg-gray-950 border border-gray-800 rounded-xl p-3 text-xs font-mono text-gray-400 overflow-x-auto">
-            <div class="text-amber-400 font-bold mb-1">Sandboxed Tool Execution Output:</div>
+          <div class="w-8 h-8 rounded-lg bg-amber-950/60 border border-amber-600/50 flex items-center justify-center text-xs shrink-0">⚙️</div>
+          <div class="flex-1 bg-black/60 border border-gray-800 rounded-xl p-3 text-xs font-mono text-gray-400 overflow-x-auto">
+            <div class="text-amber-400 font-bold mb-1 flex items-center gap-1.5">
+              <span>Sandboxed Tool Execution Output</span>
+            </div>
             <pre>${escapeHtml(m.content)}</pre>
           </div>
         `;
       } else {
         row.innerHTML = `
           <div class="w-8 h-8 rounded-lg bg-cyan-600 flex items-center justify-center text-sm shrink-0">🛡️</div>
-          <div class="flex-1 bg-clave-800 border border-gray-800 rounded-xl p-4 text-sm text-gray-200 leading-relaxed whitespace-pre-wrap">
+          <div class="flex-1 bg-clave-900 border border-gray-800 rounded-xl p-4 text-sm text-gray-200 leading-relaxed whitespace-pre-wrap">
             ${escapeHtml(m.content)}
           </div>
         `;
@@ -227,51 +547,161 @@
       return (str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     }
 
+    // 7. Chat Submission with SSE Streaming
     document.getElementById('chatForm').addEventListener('submit', async (e) => {
       e.preventDefault();
       const input = document.getElementById('promptInput');
       const text = input.value.trim();
       if (!text || !activeSessionId) return;
 
-      const sessionId = activeSessionId;
       appendMessageUI({ role: 'user', content: text });
       input.value = '';
 
+      const stream = document.getElementById('chatStream');
+      const assistantRow = document.createElement('div');
+      assistantRow.className = 'max-w-3xl mx-auto flex gap-4';
+      assistantRow.innerHTML = `
+        <div class="w-8 h-8 rounded-lg bg-cyan-600 flex items-center justify-center text-sm shrink-0">🛡️</div>
+        <div class="flex-1 bg-clave-900 border border-gray-800 rounded-xl p-4 text-sm text-gray-200 leading-relaxed whitespace-pre-wrap" id="currentStreamBox">
+          <span class="inline-block w-2 h-4 bg-cyan-400 animate-pulse"></span>
+        </div>
+      `;
+      stream.appendChild(assistantRow);
+      stream.scrollTop = stream.scrollHeight;
+
+      const streamBox = assistantRow.querySelector('#currentStreamBox');
+      const thoughtContainer = document.getElementById('streamingThoughtCard');
+      const thoughtContent = document.getElementById('streamingThoughtContent');
+      thoughtContent.textContent = '';
+      thoughtContainer.classList.remove('hidden');
+
+      let accumulatedTokens = '';
+
       try {
-        const res = await apiFetch(`/api/sessions/${sessionId}/chat`, {
+        const res = await fetch(`/api/sessions/${activeSessionId}/chat/stream`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ prompt: text })
         });
-        if (!res.ok) {
-          // The daemon sends plain-text errors, so read text, not JSON.
-          const msg = await errorText(res);
-          if (sessionId === activeSessionId) {
-            appendMessageUI({ role: 'assistant', content: 'Error: ' + msg });
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop(); // keep last incomplete line
+
+          let currentEventType = 'message';
+          for (const line of lines) {
+            if (line.startsWith('event:')) {
+              currentEventType = line.replace('event:', '').trim();
+            } else if (line.startsWith('data:')) {
+              const dataStr = line.replace('data:', '').trim();
+              if (!dataStr) continue;
+
+              try {
+                const eventObj = JSON.parse(dataStr);
+                if (currentEventType === 'thought') {
+                  thoughtContent.textContent += eventObj.content;
+                } else if (currentEventType === 'token') {
+                  accumulatedTokens += eventObj.content;
+                  streamBox.textContent = accumulatedTokens;
+                } else if (currentEventType === 'tool_call') {
+                  thoughtContent.textContent += `\n[Tool Invoked] ${eventObj.tool_name} (${eventObj.tool_args || ''})\n`;
+                } else if (currentEventType === 'tool_result') {
+                  thoughtContent.textContent += `[Tool Output] ${eventObj.content ? eventObj.content.slice(0, 120) + '...' : 'Done'}\n`;
+                } else if (currentEventType === 'done') {
+                  streamBox.textContent = eventObj.content || accumulatedTokens;
+                  speakText(streamBox.textContent);
+                }
+              } catch (err) {
+                // Raw string fallback
+                accumulatedTokens += dataStr;
+                streamBox.textContent = accumulatedTokens;
+              }
+              stream.scrollTop = stream.scrollHeight;
+            }
           }
-          return;
         }
-        await res.json();
-        await loadMessages(sessionId);
       } catch (err) {
-        appendMessageUI({ role: 'assistant', content: 'Error communicating with bot daemon: ' + err.message });
+        streamBox.textContent = 'Connection error: ' + err.message;
+      } finally {
+        setTimeout(() => thoughtContainer.classList.add('hidden'), 4000);
       }
     });
 
-    // Enter sends; Shift+Enter inserts a newline; Enter during IME composition is left alone.
-    document.getElementById('promptInput').addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229) {
-        e.preventDefault();
-        document.getElementById('chatForm').requestSubmit();
-      }
-    });
+    // 8. DevRel Modal and Solver API
+    const devRelModal = document.getElementById('devRelModal');
+    document.getElementById('openDevRelModalBtn').onclick = () => devRelModal.classList.remove('hidden');
+    document.getElementById('closeDevRelBtn').onclick = () => devRelModal.classList.add('hidden');
 
+    document.getElementById('runSolverBtn').onclick = async () => {
+      const title = document.getElementById('solverTitle').value.trim();
+      if (!title) {
+        alert('Please specify an issue title.');
+        return;
+      }
+
+      const btn = document.getElementById('runSolverBtn');
+      btn.disabled = true;
+      btn.innerHTML = '<span class="animate-spin">⏳</span> Running Autonomous Triage & Sandbox Reproduction...';
+
+      const payload = {
+        title: title,
+        description: document.getElementById('solverDescription').value.trim(),
+        repro_command: document.getElementById('solverReproCmd').value.trim(),
+        verify_command: document.getElementById('solverVerifyCmd').value.trim(),
+        target_file: document.getElementById('solverTargetFile').value.trim(),
+        proposed_patch: document.getElementById('solverProposedPatch').value.trim()
+      };
+
+      try {
+        const res = await fetch('/api/devrel/solve', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const report = await res.json();
+
+        const outCard = document.getElementById('solverOutputCard');
+        outCard.classList.remove('hidden');
+
+        const tag = document.getElementById('solverStatusTag');
+        if (report.success) {
+          tag.className = 'px-2 py-0.5 rounded font-mono font-bold bg-emerald-950 text-emerald-400 border border-emerald-800';
+          tag.textContent = 'RESOLVED';
+        } else {
+          tag.className = 'px-2 py-0.5 rounded font-mono font-bold bg-red-950 text-red-400 border border-red-800';
+          tag.textContent = 'FAILED';
+        }
+
+        document.getElementById('solverSummaryText').textContent = report.triage ? report.triage.summary : 'Completed analysis';
+        document.getElementById('solverDiffBox').textContent = report.git_diff || '(clean working tree, no diff generated)';
+        document.getElementById('solverCommitBox').textContent = report.commit_message || 'fix: update';
+      } catch (err) {
+        alert('DevRel solver failed: ' + err.message);
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<span>🚀</span> Execute Autonomous DevRel Solver';
+      }
+    };
+
+    // 9. Startup initialization
     document.getElementById('newSessionBtn').onclick = createNewSession;
 
-    apiFetch('/api/status').then(r => r.json()).then(s => {
+    fetch('/api/status').then(r => r.json()).then(s => {
       document.getElementById('modelBadge').textContent = `${s.provider}: ${s.model}`;
+      if (s.security_mode) {
+        document.getElementById('policySelector').value = s.security_mode;
+      }
     }).catch(() => {});
 
+    initWebSocket();
     fetchSessions();
   </script>
 </body>

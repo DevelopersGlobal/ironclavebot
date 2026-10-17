@@ -14,44 +14,42 @@ type IssueRequest struct {
 
 // RepoInspection holds structural and metadata information about the repository
 type RepoInspection struct {
-	Workdir       string    `json:"workdir"`
-	CurrentBranch string    `json:"current_branch"`
-	LastCommit    string    `json:"last_commit"`
-	Status        string    `json:"status"`
-	Files         []string  `json:"files"`
-	ProjectType   string    `json:"project_type"`
-	InspectedAt   time.Time `json:"inspected_at"`
+	Workdir      string    `json:"workdir"`
+	CurrentBranch string   `json:"current_branch"`
+	LastCommit   string    `json:"last_commit"`
+	Status       string    `json:"status"`
+	Files        []string  `json:"files"`
+	ProjectType  string    `json:"project_type"`
+	InspectedAt  time.Time `json:"inspected_at"`
 }
 
 // TriageResult contains analysis and plan for addressing an issue
 type TriageResult struct {
-	IssueTitle     string   `json:"issue_title"`
-	Summary        string   `json:"summary"`
-	SuspectedCause string   `json:"suspected_cause"`
-	CandidateFiles []string `json:"candidate_files"`
-	ReproStrategy  string   `json:"repro_strategy"`
-	SuggestedFix   string   `json:"suggested_fix"`
+	IssueTitle      string   `json:"issue_title"`
+	Summary         string   `json:"summary"`
+	SuspectedCause  string   `json:"suspected_cause"`
+	CandidateFiles  []string `json:"candidate_files"`
+	ReproStrategy   string   `json:"repro_strategy"`
+	SuggestedFix    string   `json:"suggested_fix"`
 }
 
 // ExecutionResult captures the output of a test/reproduction run
 type ExecutionResult struct {
 	Command  string        `json:"command"`
 	Success  bool          `json:"success"`
-	Skipped  bool          `json:"skipped,omitempty"` // no command was run
 	Output   string        `json:"output"`
 	Duration time.Duration `json:"duration"`
 }
 
 // FilePatch represents a file modification
 type FilePatch struct {
-	Path       string `json:"path"`
-	NewContent string `json:"new_content"`
+	Path        string `json:"path"`
+	NewContent  string `json:"new_content"`
 }
 
 // ResolutionReport summarizes the autonomous triage, reproduction, patch, and diff
 type ResolutionReport struct {
 	Success          bool             `json:"success"`
-	Verified         bool             `json:"verified"` // a verification command ran and passed
 	IssueTitle       string           `json:"issue_title"`
 	Triage           *TriageResult    `json:"triage"`
 	ReproductionTest *ExecutionResult `json:"reproduction_test"`

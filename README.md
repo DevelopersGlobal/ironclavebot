@@ -102,8 +102,7 @@ docker run -p 8080:8080 -v $(pwd)/workspace:/ironclave/workspace ghcr.io/develop
 
 ## ⚙️ Configuration (`.env`)
 
-Copy `.env.example` to `.env` to configure your preferred LLM. `.env` is read at startup;
-variables already set in your shell take precedence over it.
+Copy `.env.example` to `.env` to configure your preferred LLM:
 
 ```bash
 # LLM Provider: openai | ollama | mock
@@ -116,20 +115,6 @@ LLM_MODEL=gpt-4o
 # OLLAMA_BASE_URL=http://localhost:11434
 # LLM_MODEL=llama3.2
 ```
-
----
-
-## 🔐 Security notes
-
-- The dashboard listens on `127.0.0.1` by default. Binding another address (`HOST` / `-host`)
-  requires `API_TOKEN`, and every `/api` request must then send `Authorization: Bearer <token>`.
-- `SECURITY_MODE=interactive` (default) and `strict` refuse command execution and file writes
-  because there is no approval mechanism yet. `permissive` allows them; use it only inside a
-  container or VM.
-- `run_command` is **not** an isolation boundary. Commands run as the daemon's user with the
-  host filesystem and network available (only the working directory, a minimal environment, a
-  30 s timeout, an output cap and a coarse blacklist apply). Run IronClaveBot in a container or
-  VM when giving it a model you do not fully trust.
 
 ---
 
