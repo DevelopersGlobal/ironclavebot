@@ -33,6 +33,14 @@ Giving an AI agent direct terminal and filesystem access is dangerous. IronClave
 
 ---
 
+## 🎥 Demo
+
+https://github.com/user-attachments/assets/e5873013-a8a5-4539-8de5-45c65511d56f
+
+*Live run: IronClaveBot with a small local model (qwen2.5:0.5b via Ollama) inside a sandboxed container - the agent lists the workspace, reads `main.go`, and explains the Go project.*
+
+---
+
 ## 🚀 10-Second Quickstart
 
 ### Option 1: Run with Go (Zero Dependencies)
